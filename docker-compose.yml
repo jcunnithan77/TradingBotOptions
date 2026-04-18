@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  trading-bot:
+    image: registry.sriviz.com/trading-bot:latest
+    container_name: fyers-trading-bot
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Kolkata
+      - DATA_DIR=/app/data
+    env_file:
+      - .env

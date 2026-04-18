@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Bot Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="logo">⚡</div>
+                <h2>FyersBot</h2>
+            </div>
+            <nav class="menu">
+                <a href="#" class="active"><i class="icon">📊</i> Dashboard</a>
+                <a href="/auth_fyers" target="_blank"><i class="icon">🔐</i> Login Fyers</a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="topbar">
+                <h1>Daily Option Trades</h1>
+                <div class="status-indicator">
+                    <span class="dot pulse"></span>
+                    <span class="status-text">System Active</span>
+                </div>
+            </header>
+
+            <div class="content-grid">
+                <!-- Data Entry Form -->
+                <section class="card form-section glass">
+                    <h3>➕ Add New Strike</h3>
+                    <form action="/add_strike" method="POST" class="strike-form">
+                        <div class="form-group row">
+                            <div class="input-col">
+                                <label>Instrument</label>
+                                <select name="instrument">
+                                    <option value="NIFTY">NIFTY</option>
+                                    <option value="BNIFTY">BNIFTY</option>
+                                </select>
+                            </div>
+                            <div class="input-col">
+                                <label>Target 1</label>
+                                <input type="number" step="0.01" name="target_1" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <div class="input-col">
+                                <label>Strike Config</label>
+                                <input type="text" name="strike" placeholder="e.g. 24200 CE" required>
+                            </div>
+                            <div class="input-col">
+                                <label>Entry Price</label>
+                                <input type="number" step="0.01" name="entry_price" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <div class="input-col">
+                                <label>Expiry</label>
+                                <input type="text" name="expiry" placeholder="e.g. 28 Apr 2026" required>
+                            </div>
+                            <div class="input-col">
+                                <label>Fyers Symbol</label>
+                                <input type="text" name="fyers_symbol" placeholder="NSE:NIFTY24APR24200CE" required>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <div class="input-col">
+                                <label>Quantity</label>
+                                <input type="number" name="quantity" value="50" required>
+                            </div>
+                            <div class="input-col" style="display:flex; align-items:flex-end;">
+                                <button type="submit" class="btn-primary">Add Setup</button>
+                            </div>
+                        </div>
+                    </form>
+                </section>
+
+                <!-- Monitored Strikes Table -->
+                <section class="card table-section">
+                    <h3>🎯 Monitored Setups</h3>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Instrument</th>
+                                    <th>Strike</th>
+                                    <th>Expiry</th>
+                                    <th>Entry</th>
+                                    <th>T1</th>
+                                    <th>SL</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for strike in strikes %}
+                                <tr>
+                                    <td><strong>{{ strike.instrument }}</strong></td>
+                                    <td><span class="badge {{ 'badge-ce' if 'CE' in strike.strike else 'badge-pe' }}">{{ strike.strike }}</span></td>
+                                    <td class="text-muted">{{ strike.expiry }}</td>
+                                    <td>{{ strike.entry_price }}</td>
+                                    <td class="text-success">{{ strike.target_1 }}</td>
+                                    <td class="text-danger">{{ strike.stop_loss }}</td>
+                                    <td>
+                                        <span class="status-badge status-{{ strike.status|lower }}">{{ strike.status }}</span>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">No strikes configured yet.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Trading Journal -->
+                <section class="card journal-section">
+                    <h3>📓 Tracking Journal</h3>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Action</th>
+                                    <th>Symbol</th>
+                                    <th>Type</th>
+                                    <th>Price</th>
+                                    <th>Qty</th>
+                                    <th>Message</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for j in journal %}
+                                <tr>
+                                    <td class="text-muted">{{ j.timestamp.strftime('%Y-%m-%d %H:%M:%S') if j.timestamp else '' }}</td>
+                                    <td><span class="action-{{ j.action|lower }}">{{ j.action }}</span></td>
+                                    <td>{{ j.symbol }}</td>
+                                    <td>{{ j.order_type }}</td>
+                                    <td>₹{{ j.price }}</td>
+                                    <td>{{ j.quantity }}</td>
+                                    <td class="text-muted">{{ j.message }}</td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted">No entries in journal today.</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
