@@ -25,6 +25,7 @@ class DailyStrike(Base):
     status = Column(String, default="pending")
     
     quantity = Column(Integer, default=50) # Assuming 1 lot of Nifty = 50, BNifty = 15
+    target_date = Column(String, index=True) # Format: YYYY-MM-DD
     created_at = Column(DateTime, default=get_ist_now)
 
 class TradingJournal(Base):

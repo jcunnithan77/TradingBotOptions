@@ -77,9 +77,14 @@
                                 <label>Quantity</label>
                                 <input type="number" name="quantity" value="50" required>
                             </div>
-                            <div class="input-col" style="display:flex; align-items:flex-end;">
-                                <button type="submit" class="btn-primary">Add Setup</button>
+                            <div class="input-col">
+                                <label>Target Date</label>
+                                <input type="date" name="target_date" id="target_date_input" required>
                             </div>
+                        </div>
+
+                        <div class="form-group" style="display:flex; justify-content:flex-end; margin-top:15px;">
+                            <button type="submit" class="btn-primary">Add Setup</button>
                         </div>
                     </form>
                 </section>
@@ -97,6 +102,7 @@
                                     <th>Entry</th>
                                     <th>T1</th>
                                     <th>SL</th>
+                                    <th>Date</th>
                                     <th>Status</th>
                                 </tr>
                             </thead>
@@ -109,6 +115,7 @@
                                     <td>{{ strike.entry_price }}</td>
                                     <td class="text-success">{{ strike.target_1 }}</td>
                                     <td class="text-danger">{{ strike.stop_loss }}</td>
+                                    <td class="text-muted">{{ strike.target_date }}</td>
                                     <td>
                                         <span class="status-badge status-{{ strike.status|lower }}">{{ strike.status }}</span>
                                     </td>

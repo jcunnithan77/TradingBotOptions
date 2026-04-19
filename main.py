@@ -48,6 +48,7 @@ async def add_strike(
     entry_price: float = Form(...),
     target_1: float = Form(...),
     quantity: int = Form(50),
+    target_date: str = Form(...),
     db: Session = Depends(get_db)
 ):
     try:
@@ -62,6 +63,7 @@ async def add_strike(
             target_3=target_1 + 20, # Mock derived
             stop_loss=entry_price - 20, # Automatically calculated stop loss
             quantity=quantity,
+            target_date=target_date,
             status="pending"
         )
         db.add(new_strike)

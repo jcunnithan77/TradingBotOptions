@@ -1,16 +1,35 @@
 import asyncio
+from datetime import datetime, time
+import pytz
 from sqlalchemy.orm import Session
 from db.database import SessionLocal
 from db.models import DailyStrike, TradingJournal
 from core.fyers_client import FyersSocketClient, get_fyers_client
 import threading
+import time as time_module
 
 class TradingEngine:
     def __init__(self):
         self.ws_client = FyersSocketClient(on_message_callback=self.handle_price_update)
         self.active_symbols = {} # Map symbol string to strike id
         self.fyers = get_fyers_client()
+        self.timezone = pytz.timezone('Asia/Kolkata')
         
+    def get_ist_now(self):
+        return datetime.now(self.timezone)
+
+    def is_within_trading_hours(self):
+        now = self.get_ist_now()
+        start_time = time(9, 0)
+        end_time = time(15, 30)
+        return start_time <= now.time() <= end_time
+
+    def is_past_cutoff(self):
+        """Check if it's past 14:30 (2:30 PM)"""
+        now = self.get_ist_now()
+        cutoff_time = time(14, 30)
+        return now.time() >= cutoff_time
+
     def start_engine(self):
         # Run websocket in a background thread
         ws_thread = threading.Thread(target=self.ws_client.connect, daemon=True)
@@ -18,10 +37,21 @@ class TradingEngine:
         
         # Give it a second to connect, then subscribe to pending trades
         threading.Timer(2.0, self.refresh_subscriptions).start()
+        
+        # Start the 2:30 PM Cut-off Monitor
+        monitor_thread = threading.Thread(target=self.bg_cutoff_monitor, daemon=True)
+        monitor_thread.start()
 
     def refresh_subscriptions(self):
+        today_date = self.get_ist_now().strftime("%Y-%m-%d")
         db = SessionLocal()
-        pending_strikes = db.query(DailyStrike).filter(DailyStrike.status == "pending").all()
+        pending_strikes = db.query(DailyStrike).filter(
+            DailyStrike.status == "pending",
+            DailyStrike.target_date == today_date
+        ).all()
+        
+        # Clear current mapping and rebuild
+        self.active_symbols = {}
         symbols_to_subscribe = []
         for strike in pending_strikes:
             if strike.fyers_symbol:
@@ -30,13 +60,71 @@ class TradingEngine:
         db.close()
         
         if symbols_to_subscribe:
-            print(f"Subscribing to {symbols_to_subscribe}")
+            print(f"Refreshing subscriptions for {today_date}: {symbols_to_subscribe}")
             self.ws_client.subscribe(symbols_to_subscribe)
 
+    def bg_cutoff_monitor(self):
+        """Background loop to check for 2:30 PM cut-off even if no ticks arrive."""
+        while True:
+            try:
+                if self.is_past_cutoff() and self.is_within_trading_hours():
+                    self.check_and_cancel_expired_trades()
+            except Exception as e:
+                print(f"Monitor Error: {e}")
+            time_module.sleep(60) # Check every minute
+
+    def check_and_cancel_expired_trades(self):
+        """Cancel all pending trades if no trade has triggered by 14:30."""
+        today_date = self.get_ist_now().strftime("%Y-%m-%d")
+        db = SessionLocal()
+        
+        # Check if any trade was already triggered/completed today
+        any_triggered = db.query(DailyStrike).filter(
+            DailyStrike.target_date == today_date,
+            DailyStrike.status.in_(["triggered", "completed", "stopped_out"])
+        ).first()
+
+        if not any_triggered:
+            # If no trade active, cancel all remaining pendings for today
+            pendings = db.query(DailyStrike).filter(
+                DailyStrike.target_date == today_date,
+                DailyStrike.status == "pending"
+            ).all()
+            
+            if pendings:
+                print(f"CUT-OFF REACHED (14:30): Cancelling {len(pendings)} pending trades.")
+                for p in pendings:
+                    p.status = "cancelled"
+                db.commit()
+                # Clean up local subscription mapping
+                self.active_symbols = {}
+        
+        db.close()
+
+    def cancel_others_for_today(self, triggered_strike_id):
+        """Cancel all other pending trades for today once one executes."""
+        today_date = self.get_ist_now().strftime("%Y-%m-%d")
+        db = SessionLocal()
+        others = db.query(DailyStrike).filter(
+            DailyStrike.target_date == today_date,
+            DailyStrike.status == "pending",
+            DailyStrike.id != triggered_strike_id
+        ).all()
+        
+        if others:
+            print(f"MUTUAL EXCLUSION: Cancelling {len(others)} other pending setups.")
+            for o in others:
+                o.status = "cancelled"
+            db.commit()
+            # Resync active symbols
+            self.refresh_subscriptions()
+        db.close()
+
     def handle_price_update(self, message):
-         # Message format: {'ltp': 123.45, 'symbol': 'NSE:NIFTY...', ...}
+         if not self.is_within_trading_hours():
+             return
+
          if not isinstance(message, dict):
-            # It could be a list of dicts depending on litemode
             if isinstance(message, list):
                 for msg in message:
                     self.process_tick(msg)
@@ -54,24 +142,24 @@ class TradingEngine:
         if not strike_id:
             return
             
-        # Check against db
         db = SessionLocal()
         strike = db.query(DailyStrike).filter(DailyStrike.id == strike_id).first()
         
         if strike and strike.status == "pending":
-            # If current price crosses or touches the entry price
-            # Condition usually implies we are waiting for a pullback or breakout.
-            # Simplified: If LTP crosses entry price 
-            # Note: A robust system maintains history to detect crossover.
-            # For this prototype, if we touch or gap past Entry, trigger.
-            # Assuming Buy on breakout for Call/Put Options.
-            
-            # Using > for this example (can be adjusted to cross-over logic)
+            # Extra check for cut-off hours within tick processing
+            if self.is_past_cutoff():
+                db.close()
+                self.check_and_cancel_expired_trades()
+                return
+
             if ltp >= strike.entry_price:
                 print(f"TRIGGER: {symbol} crossed entry {strike.entry_price}. LTP: {ltp}")
                 strike.status = "triggered"
                 db.commit()
+                # 1. Place the order
                 self.place_entry_order(strike, ltp, db)
+                # 2. Cancel all other pending trades for today
+                self.cancel_others_for_today(strike.id)
                 
         db.close()
 
@@ -83,12 +171,11 @@ class TradingEngine:
             print("Cannot place order. Fyers client not initialized.")
             return
 
-        # Place a Market Buy Order
         order_data = {
             "symbol": strike.fyers_symbol,
             "qty": strike.quantity,
-            "type": 2, # 2 indicates Market Order
-            "side": 1, # 1 implies Buy
+            "type": 2, # Market
+            "side": 1, # Buy
             "productType": "MARGIN",
             "limitPrice": 0,
             "stopPrice": 0,
@@ -98,15 +185,7 @@ class TradingEngine:
         }
         
         try:
-             # In a real environment uncomment this:
-             # response = self.fyers.place_order(data=order_data)
-             # print("Order Response:", response)
-             # fyers_order_id = response.get('id', 'dummy_id')
-             
-             # MOCK execution for safety
              fyers_order_id = "mock_fyers_id_123"
-             
-             # Log into Trading Journal
              journal = TradingJournal(
                  strike_id=strike.id,
                  action="BUY",
@@ -120,44 +199,14 @@ class TradingEngine:
              db.add(journal)
              db.commit()
              
-             # After Entry is successful, calculate Stop Loss and Target
              sl_price = strike.entry_price - 20
              target_price = strike.target_1
-             
-             # Depending on broker, you might place an OCO/Bracket order or just independent orders right away
              self.place_sl_target_orders(strike, sl_price, target_price, db)
              
         except Exception as e:
              print(f"Failed to place order: {e}")
 
     def place_sl_target_orders(self, strike: DailyStrike, sl_price: float, target_price: float, db: Session):
-        # We place a Stop Loss (Sell)
-        sl_order_data = {
-            "symbol": strike.fyers_symbol,
-            "qty": strike.quantity,
-            "type": 3, # Stop loss market
-            "side": -1, # Sell
-            "productType": "MARGIN",
-            "limitPrice": 0,
-            "stopPrice": sl_price,
-            "validity": "DAY"
-        }
-        
-        # We place a Target (Sell) Limit
-        target_order_data = {
-            "symbol": strike.fyers_symbol,
-            "qty": strike.quantity,
-            "type": 1, # Limit
-            "side": -1, # Sell
-            "productType": "MARGIN",
-            "limitPrice": target_price,
-            "stopPrice": 0,
-            "validity": "DAY",
-        }
-        
-        # In a real environment, you might link these or use Fyers BO/CO order types if allowed.
-        # This is a mocked log for architecture completion.
-        
         journal_sl = TradingJournal(
             strike_id=strike.id, action="SELL", symbol=strike.fyers_symbol, quantity=strike.quantity, 
             price=sl_price, order_type="STOP_LOSS", fyers_order_id="mock_sl_id", message="Pending Stop loss"
