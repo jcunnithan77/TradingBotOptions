@@ -1,8 +1,10 @@
 import os
+import hashlib
+import requests
+import json
 from fyers_apiv3 import fyersModel
 from fyers_apiv3.FyersWebsocket import data_ws
 from dotenv import load_dotenv
-import json
 
 load_dotenv()
 
@@ -13,6 +15,11 @@ REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI")
 # We will save the access token to a local file manually for now
 DATA_DIR = os.getenv("DATA_DIR", "./data")
 TOKEN_FILE = os.path.join(DATA_DIR, "fyers_token.txt")
+
+def generate_appid_hash():
+    """Generates the SHA-256 hash of appId:appSecret"""
+    combined_string = f"{CLIENT_ID}:{SECRET_KEY}"
+    return hashlib.sha256(combined_string.encode()).hexdigest()
 
 def get_auth_link():
     session = fyersModel.SessionModel(
@@ -25,21 +32,33 @@ def get_auth_link():
     return session.generate_authcode()
 
 def generate_token_from_code(auth_code: str):
-    session = fyersModel.SessionModel(
-        client_id=CLIENT_ID,
-        secret_key=SECRET_KEY,
-        redirect_uri=REDIRECT_URI,
-        response_type="code",
-        grant_type="authorization_code"
-    )
-    session.set_token(auth_code)
-    response = session.generate_token()
-    if response.get("s") == "ok":
-        access_token = response["access_token"]
+    """
+    Validates the auth code and generates an access token using manual appIdHash.
+    Reference: https://api-t1.fyers.in/api/v3/validate-authcode
+    """
+    appid_hash = generate_appid_hash()
+    
+    url = "https://api-t1.fyers.in/api/v3/validate-authcode"
+    payload = {
+        "grant_type": "authorization_code",
+        "appIdHash": appid_hash,
+        "code": auth_code
+    }
+    headers = {
+        'Content-Type': 'application/json'
+    }
+
+    response = requests.post(url, json=payload, headers=headers)
+    res_data = response.json()
+
+    if res_data.get("s") == "ok":
+        access_token = res_data["access_token"]
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(TOKEN_FILE, "w") as f:
             f.write(access_token)
         return access_token
-    raise Exception(f"Failed to generate token: {response}")
+    
+    raise Exception(f"Failed to generate token: {res_data}")
 
 def get_fyers_client():
     if not os.path.exists(TOKEN_FILE):
