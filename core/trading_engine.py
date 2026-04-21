@@ -152,8 +152,8 @@ class TradingEngine:
                 self.check_and_cancel_expired_trades()
                 return
 
-            if ltp >= strike.entry_price:
-                print(f"TRIGGER: {symbol} crossed entry {strike.entry_price}. LTP: {ltp}")
+            if strike.entry_price <= ltp <= strike.entry_price + 4:
+                print(f"TRIGGER: {symbol} crossed entry {strike.entry_price}. LTP: {ltp} (within 4pt range)")
                 strike.status = "triggered"
                 db.commit()
                 # 1. Place the order
